@@ -122,33 +122,9 @@ glm::mat4 orthographic_projection(float fov, float aspect_ratio, float near, flo
     return proj;
 }
 
-// Calculate the NDC coordinates of a point relative to a transform
-glm::vec3 project_vertex(glm::mat4 transform, glm::mat4 proj, glm::vec4 pos) {
-    // World to transform space
-    pos = glm::inverse(transform) * pos;
-
-    // Transform to ndc space
-    pos = proj * pos;
-
-    return glm::vec3(pos / pos.w);
-}
-
-CanvasPoint ndc_to_canvas(DrawingWindow window, glm::vec3 ndc) {
-    // Raster space conversion
-    float raster_x = floor(window.width / 2 * (1 + ndc.x)); 
-    float raster_y = floor(window.height / 2 * (1 - ndc.y));
-
-    // Create the canvas point for this point
-    CanvasPoint point(raster_x, raster_y);
-    point.depth = ndc.z;
-
-    return point;
-}
-
-
-/****************
-CAMERA FUNCTIONS
-****************/
+/*********************
+OBJECT TRANSFORMATIONS
+**********************/
 
 void rotate_x(glm::mat4 &transform, float theta) {
     glm::mat3 x_rot(1, 0, 0, 
@@ -293,8 +269,8 @@ void draw_filled_triangle(DrawingWindow &window, std::vector<std::vector<float>>
     // Clip the values so they are within the screen
     minX = std::max(minX, 0);
     minY = std::max(minY, 0);
-    maxX = std::min(maxX, (int) window.width - 1);
-    maxY = std::min(maxY, (int) window.height - 1);
+    maxX = std::min(maxX, window.width - 1);
+    maxY = std::min(maxY, window.height - 1);
 
     // Check if each pixel in the bounding box is within the triangle or not
     float inv_area = 1.0f / ((v2.x - v0.x) * (v1.y - v0.y) - (v2.y - v0.y) * (v1.x - v0.x));
@@ -444,7 +420,8 @@ void draw_raster(DrawingWindow &window, Camera camera, Light light, std::vector<
     for (int j = 0; j < model.size(); j++) {
         ModelTriangle t = model[j];
     
-        if (glm::dot(glm::vec3(camera.transform[0]), t.surface_normal) < 0) {
+        // Prevent backs of triangles from not being rendered
+        if (glm::dot((t.vertices[0] - glm::vec3(camera.transform[3])), t.surface_normal) >= 0) {
             std::swap(t.vertices[2], t.vertices[1]);
         }
         // Project each vertex
