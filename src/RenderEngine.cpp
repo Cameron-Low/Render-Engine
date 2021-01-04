@@ -258,7 +258,10 @@ void draw_filled_triangle(DrawingWindow &window, std::vector<std::vector<float>>
     CanvasPoint v1 = triangle.v1();
     CanvasPoint v2 = triangle.v2();
 
-    if (v0.depth < 0 && v1.depth < 0 && v2.depth < 0) return;
+    if (v0.depth < 0 && v1.depth < 0 && v2.depth < 0) {
+        std::cout << "Culled" << std::endl;
+        return;
+    }
 
     // Calculate bounding box
     int minX = std::min({v0.x, v1.x, v2.x});
@@ -271,6 +274,7 @@ void draw_filled_triangle(DrawingWindow &window, std::vector<std::vector<float>>
     minY = std::max(minY, 0);
     maxX = std::min(maxX, window.width - 1);
     maxY = std::min(maxY, window.height - 1);
+
 
     // Check if each pixel in the bounding box is within the triangle or not
     float inv_area = 1.0f / ((v2.x - v0.x) * (v1.y - v0.y) - (v2.y - v0.y) * (v1.x - v0.x));
@@ -295,13 +299,15 @@ void draw_filled_triangle(DrawingWindow &window, std::vector<std::vector<float>>
                 glm::vec3 bary = glm::vec3(u, v, w) * inv_area; 
                 // Calculate the depth at this pixel
                 pixel_depth = interpolate_bary(v0.depth, v1.depth, v2.depth, bary);
+                if (pixel_depth < 0 || pixel_depth > 1) continue;
                 
                 // Check if the triangle is textured
                 if (v0.texturePoint == glm::vec2(-1,-1)) {
                     pixel_colour = interpolate_bary(v0.colour, v1.colour, v2.colour, bary);
                 } else {
-                    glm::vec2 textureCoords = interpolate_bary(v0.texturePoint, v1.texturePoint, v2.texturePoint, bary) / pixel_depth;
-                    uint32_t colour = texture.pixels[round(textureCoords.x) + round(textureCoords.y) * texture.width];
+                    glm::vec2 texture_coords = interpolate_bary(v0.texturePoint, v1.texturePoint, v2.texturePoint, bary) / pixel_depth;
+                    if (texture_coords.x >= texture.width || texture_coords.x < 0 || texture_coords.y >= texture.height || texture_coords.y < 0) return;
+                    uint32_t colour = texture.pixels[floor(texture_coords.x) + floor(texture_coords.y) * texture.width];
                     pixel_colour = get_rgb(colour);
                 }
 
@@ -362,7 +368,7 @@ void draw_raytraced(DrawingWindow &window, Camera camera, Light light, std::vect
                         }
 
                         // Lighting with soft shadows
-                        int shadow_samples = 1;
+                        int shadow_samples = 100;
                         glm::vec3 colour;
                         for (int i = 0; i < shadow_samples; i++) {
                             // Get random point on light sphere
@@ -424,11 +430,18 @@ void draw_raster(DrawingWindow &window, Camera camera, Light light, std::vector<
         if (glm::dot((t.vertices[0] - glm::vec3(camera.transform[3])), t.surface_normal) >= 0) {
             std::swap(t.vertices[2], t.vertices[1]);
         }
+
         // Project each vertex
+        std::vector<glm::vec3> points;
         for (int i = 0; i < 3; i++) {
             glm::vec4 point = project_to_screen * glm::vec4(t.vertices[i], 1);
-            img_triangle.vertices[i] = CanvasPoint(floor(point.x / point.w + window.width/2), floor(window.height/2 - point.y / point.w));
-            img_triangle.vertices[i].depth = point.z / point.w;
+            points.push_back(glm::vec3(point / point.w));
+        }
+
+        for (int i = 0; i < 3; i++) {
+            img_triangle.vertices[i] = CanvasPoint(floor(points[i].x + window.width/2), floor(window.height/2 - points[i].y));
+            float depth = points[i].z;
+            img_triangle.vertices[i].depth = depth > 1 || depth < 0 ? -1 : depth;
             img_triangle.vertices[i].colour = t.material.diffuse_colour;
         }
 
@@ -462,7 +475,6 @@ void draw_wireframe(DrawingWindow &window, Camera camera, std::vector<ModelTrian
 
     CanvasTriangle img_triangle;
     for (ModelTriangle t : model) {
-        
         for (int i = 0; i < 3; i++) {
             glm::vec4 point = project_to_screen * glm::vec4(t.vertices[i], 1);
             img_triangle.vertices[i] = CanvasPoint(floor(point.x / point.w + window.width/2), floor(window.height/2 - point.y / point.w));
@@ -531,9 +543,9 @@ void handleEvent(SDL_Event event, DrawingWindow &window, Camera &camera, Light &
                 camera.transform[3].y -= 0.1f; 
             }
         } else if (event.key.keysym.sym == SDLK_q) {
-            camera.fov += 1;
+            camera.transform[3].z -= 0.1f; 
         } else if (event.key.keysym.sym == SDLK_e) {
-            camera.fov -= 1;
+            camera.transform[3].z += 0.1f; 
         } else if (event.key.keysym.sym == SDLK_TAB) {
             toggle_mode();
         } else if (event.key.keysym.sym == SDLK_r) {
@@ -557,7 +569,7 @@ int main(int argc, char *argv[]) {
     Camera camera = {camera_transform, 0.1, 1000, 45};
     
     // Load in our model and choose the initial rendering mode
-    std::vector<ModelTriangle> model = load_obj("textured-cornell-box", 0.17);
+    std::vector<ModelTriangle> model = load_obj("cornell-box", 0.17);
     MODE = WIREFRAME;
 
     // Create light source
